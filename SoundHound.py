@@ -5,41 +5,31 @@ from scipy.io.wavfile import write
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
+from PIL import Image, ImageTk
+
 
 def image_to_sine_wave(image_path, output_audio_path, duration=3, sample_rate=44100):
-    """
-    Convert an image to an enhanced sine wave representation for audio.
-    Enhanced mapping includes frequency range, edge detection, and spatial effects.
-    """
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
     
-    # Load the image
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise ValueError(f"Failed to load image from {image_path}")
 
-    # Resize image to a fixed size (50x50) for simplicity
     img = cv2.resize(img, (350, 350))
 
-    # Edge detection using Sobel filter
     grad_x = cv2.Sobel(img, cv2.CV_64F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(img, cv2.CV_64F, 0, 1, ksize=3)
     edges = np.sqrt(grad_x**2 + grad_y**2)
     edges_normalized = cv2.normalize(edges, None, 0, 1, cv2.NORM_MINMAX)
 
-    # Normalize pixel values to range 0-1
     img_normalized = img / 255.0
-
-    # Create a time array for the audio signal
     total_samples = duration * sample_rate
     t = np.linspace(0, duration, total_samples, endpoint=False)
 
-    # Initialize audio signals for stereo (left and right channels)
     audio_signal_left = np.zeros(total_samples)
     audio_signal_right = np.zeros(total_samples)
 
-    # Map pixel values to frequencies and amplitudes
     pixel_values = img_normalized.flatten()
     edge_values = edges_normalized.flatten()
     num_pixels = len(pixel_values)
@@ -48,23 +38,14 @@ def image_to_sine_wave(image_path, output_audio_path, duration=3, sample_rate=44
     for i, (pixel_value, edge_value) in enumerate(zip(pixel_values, edge_values)):
         start_idx = i * samples_per_pixel
         end_idx = (i + 1) * samples_per_pixel
-
-        # Frequency mapping: pixel intensity affects frequency range
-        frequency = 100 + pixel_value * 4900  # Frequency in Hz (100 Hz to 5000 Hz)
-
-        # Edge-weighted amplitude
-        amplitude = edge_value  # Edge strength determines loudness
-
-        # Generate sine wave
+        frequency = 100 + pixel_value * 4900
+        amplitude = edge_value
         sine_wave = amplitude * np.sin(2 * np.pi * frequency * t[start_idx:end_idx])
-
-        # Spatial effects: left/right channel based on horizontal position
-        col = i % 50  # Column index in the 50x50 image
-        panning_factor = col / 50.0  # Left-right balance
+        col = i % 50
+        panning_factor = col / 50.0
         audio_signal_left[start_idx:end_idx] += (1 - panning_factor) * sine_wave
         audio_signal_right[start_idx:end_idx] += panning_factor * sine_wave
 
-    # Normalize the audio signals
     max_amplitude = max(np.max(np.abs(audio_signal_left)), np.max(np.abs(audio_signal_right)))
     if max_amplitude > 0:
         audio_signal_left = np.int16(audio_signal_left / max_amplitude * 32767)
@@ -72,17 +53,12 @@ def image_to_sine_wave(image_path, output_audio_path, duration=3, sample_rate=44
     else:
         raise ValueError("Generated audio contains only silence.")
 
-    # Combine left and right channels into stereo
     stereo_signal = np.column_stack((audio_signal_left, audio_signal_right))
-
-    # Write the stereo audio signal to a .wav file
     write(output_audio_path, sample_rate, stereo_signal)
     print(f"Audio saved to {output_audio_path}")
 
+
 def select_image():
-    """
-    Open a file dialog to select an image and generate the sine wave audio.
-    """
     file_path = filedialog.askopenfilename(
         title="Select Image",
         filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")]
@@ -101,29 +77,68 @@ def select_image():
             except Exception as e:
                 messagebox.showerror("Error", f"An error occurred: {e}")
 
+
+def capture_image():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        messagebox.showerror("Error", "Could not access the camera.")
+        return
+
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        messagebox.showerror("Error", "Failed to capture image from camera.")
+        return
+
+    # Save the captured image temporarily
+    temp_image_path = "captured_image.png"
+    cv2.imwrite(temp_image_path, frame)
+
+    # Display the captured image in the GUI
+    captured_img = Image.open(temp_image_path)
+    captured_img.thumbnail((300, 300))
+    captured_img_tk = ImageTk.PhotoImage(captured_img)
+    image_label.config(image=captured_img_tk)
+    image_label.image = captured_img_tk
+    input_label.config(text="Captured Image")
+
+    # Prompt user to save the audio file
+    output_audio_path = filedialog.asksaveasfilename(
+        title="Save Audio As",
+        defaultextension=".wav",
+        filetypes=[("WAV Files", "*.wav")]
+    )
+    if output_audio_path:
+        try:
+            image_to_sine_wave(temp_image_path, output_audio_path)
+            messagebox.showinfo("Success", f"Audio file saved to: {output_audio_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+
+
 # Create the GUI
 root = tk.Tk()
 root.title("Image to Enhanced Sine Wave Converter")
 
-# Frame for instructions
 frame = ttk.Frame(root, padding="10")
 frame.grid(row=0, column=0, padx=10, pady=10, sticky="EW")
 
-# Instruction label
 instruction_label = ttk.Label(
-    frame, 
-    text="Select an image to generate a sine wave audio file. "
-         "The image will be resized to 50x50 resolution."
+    frame,
+    text="Select an image or capture one with the camera to generate a sine wave audio file."
 )
 instruction_label.grid(row=0, column=0, pady=(0, 10), sticky="W")
 
-# Input image label
 input_label = ttk.Label(frame, text="No image selected.")
 input_label.grid(row=1, column=0, pady=(0, 10), sticky="W")
 
-# Select image button
 select_button = ttk.Button(frame, text="Select Image", command=select_image)
-select_button.grid(row=2, column=0, pady=(10, 0), sticky="W")
+select_button.grid(row=2, column=0, pady=(10, 5), sticky="W")
 
-# Run the main loop
+capture_button = ttk.Button(frame, text="Capture Image", command=capture_image)
+capture_button.grid(row=3, column=0, pady=(5, 10), sticky="W")
+
+image_label = ttk.Label(frame)
+image_label.grid(row=4, column=0, pady=(10, 0))
+
 root.mainloop()
